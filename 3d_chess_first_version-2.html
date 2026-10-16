@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>3D Chess — First Playable Version</title>
+<style>
+:root{--bg:#09131e;--panel:#122435;--gold:#f2c96d;--cream:#f5e5c6;--dark:#7b4a2a;--text:#f4f7fb}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#20394d,#08111a 65%);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+header{text-align:center;padding:16px 12px 8px}h1{margin:0;color:var(--gold);font-family:Georgia,serif;font-size:clamp(28px,7vw,42px);letter-spacing:2px}header p{margin:4px 0 0;color:#b7c9d8;font-size:13px}
+main{max-width:720px;margin:auto;padding:10px 12px 26px}.panel{background:linear-gradient(145deg,#183146,#0d1b28);border:1px solid #345064;border-radius:16px;padding:12px;box-shadow:0 12px 28px #0007}
+.controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:12px}
+button,select{border:1px solid #527087;background:#172d40;color:#fff;border-radius:10px;padding:10px 12px;font-size:14px;font-weight:600}
+button.primary{background:linear-gradient(#ffe49b,#d6a83d);color:#1b1a15;border-color:#ffe49b}button:active{transform:scale(.98)}
+.status{text-align:center;font-weight:700;color:var(--gold);min-height:24px;margin:2px 0 10px}
+.board-wrap{perspective:900px;padding:4px 2px 12px}.board{display:grid;grid-template-columns:repeat(8,1fr);aspect-ratio:1;width:100%;border:7px solid #4a2b1b;border-radius:7px;overflow:hidden;transform:rotateX(3deg);box-shadow:0 15px 0 #2b1a13,0 22px 26px #0008;touch-action:manipulation}
+.square{display:flex;align-items:center;justify-content:center;position:relative;min-width:0;aspect-ratio:1;border:0;border-radius:0;padding:0;font-family:"Arial Unicode MS",serif;font-size:clamp(25px,8.2vw,52px);line-height:1;text-shadow:0 2px 2px #0008;user-select:none}
+.light{background:linear-gradient(135deg,#f3dfb7,#c9a16c)}.dark{background:linear-gradient(135deg,#96613c,#60391f)}
+.square.white-piece{color:#fff8e9;text-shadow:0 2px 0 #7b5d3e,0 4px 4px #000b}.square.black-piece{color:#101820;text-shadow:0 1px 0 #c8d2d8,0 3px 4px #0008}
+.square.selected{outline:4px solid #42e57d;outline-offset:-4px;z-index:2}.square.last{box-shadow:inset 0 0 0 100px #f3d65a44}
+.square.legal:after{content:"";position:absolute;width:22%;height:22%;border-radius:50%;background:#2cdb73bb;box-shadow:0 0 0 2px #123b24aa}
+.square.capture:after{content:"";position:absolute;inset:4px;border:4px solid #e6534b;border-radius:50%;pointer-events:none}
+.coords{position:absolute;font:9px system-ui;color:#fff9;bottom:2px;left:3px;pointer-events:none}
+.bottom-row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}.tiny{font-size:12px;color:#b8c8d4}.moves{max-height:100px;overflow:auto;font-size:12px;color:#c5d5df;margin-top:10px;line-height:1.7}.moves span{display:inline-block;margin-right:8px}
+.promo{display:none;gap:6px;justify-content:center;flex-wrap:wrap;margin:8px}.promo.show{display:flex}
+footer{text-align:center;color:#8ea5b6;font-size:11px;padding:16px}
+@media(min-width:600px){main{padding-top:16px}.square{font-size:52px}.board{max-width:580px;margin:auto}.board-wrap{padding-bottom:16px}}
+</style>
+</head>
+<body>
+<header><h1>♛ 3D CHESS</h1><p>THINK · MOVE · WIN — First playable browser version</p></header>
+<main><section class="panel">
+<div class="controls">
+<select id="mode" aria-label="Game mode"><option value="ai">Play vs Computer</option><option value="local">2 Players on this phone</option></select>
+<select id="level" aria-label="Computer level"><option value="easy">Easy AI</option><option value="medium" selected>Medium AI</option></select>
+<button id="new" class="primary">New Game</button><button id="undo">Undo</button>
+</div>
+<div id="status" class="status">Loading chess engine…</div>
+<div class="board-wrap"><div id="board" class="board" aria-label="Chess board"></div></div>
+<div id="promo" class="promo"><span class="tiny">Promote pawn:</span><button data-p="q">♛ Queen</button><button data-p="r">♜ Rook</button><button data-p="b">♝ Bishop</button><button data-p="n">♞ Knight</button></div>
+<div class="bottom-row"><span class="tiny" id="turn">White to move</span><button id="flip">Flip Board</button><button id="hint">Hint</button></div>
+<div id="moves" class="moves">Moves will appear here.</div>
+</section><footer>Works in your phone browser. Internet is needed once to load the chess rules library. No account required.</footer></main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<script>
+const boardEl=document.getElementById('board'),statusEl=document.getElementById('status'),turnEl=document.getElementById('turn'),movesEl=document.getElementById('moves'),promoEl=document.getElementById('promo');
+const glyph={wk:'♔',wq:'♕',wr:'♖',wb:'♗',wn:'♘',wp:'♙',bk:'♚',bq:'♛',br:'♜',bb:'♝',bn:'♞',bp:'♟'};
+let game,selected=null,legal=[],flipped=false,lastMove=null,pendingPromotion=null,thinking=false;
+function start(){if(!window.Chess){statusEl.textContent='Could not load chess rules. Check internet and reload.';return}game=new Chess();selected=null;legal=[];lastMove=null;pendingPromotion=null;thinking=false;promoEl.classList.remove('show');render();updateStatus()}
+function sqName(r,c){return String.fromCharCode(97+c)+(8-r)}
+function render(){
+ boardEl.innerHTML='';let b=game.board();
+ for(let vr=0;vr<8;vr++)for(let vc=0;vc<8;vc++){
+  let r=flipped?7-vr:vr,c=flipped?7-vc:vc,sq=sqName(r,c),p=b[r][c],el=document.createElement('button');
+  el.className='square '+((r+c)%2===0?'light':'dark');el.setAttribute('aria-label',sq);
+  if(p){el.textContent=glyph[p.color+p.type];el.classList.add(p.color==='w'?'white-piece':'black-piece')}
+  if(selected===sq)el.classList.add('selected');
+  if(lastMove&&(lastMove.from===sq||lastMove.to===sq))el.classList.add('last');
+  if(legal.some(m=>m.to===sq)){el.classList.add('legal');if(p)el.classList.add('capture')}
+  if(vc===0) {let co=document.createElement('span');co.className='coords';co.textContent=8-r;el.appendChild(co)}
+  el.addEventListener('click',()=>tap(sq));boardEl.appendChild(el)
+ }
+ let hist=game.history();movesEl.innerHTML=hist.length?hist.reduce((out,m,i)=>out+(i%2===0?'<span><b>'+(Math.floor(i/2)+1)+'.</b> ':'')+m+(i%2===1?'</span>':' '),''):'Moves will appear here.';
+}
+function updateStatus(){
+ if(!game)return;
+ let msg='';
+ if(game.in_checkmate())msg='Checkmate — '+(game.turn()==='w'?'Black':'White')+' wins!';
+ else if(game.in_draw())msg='Draw game.';
+ else if(game.in_check())msg=(game.turn()==='w'?'White':'Black')+' is in check!';
+ else msg=(game.turn()==='w'?'White':'Black')+' to move';
+ statusEl.textContent=msg;turnEl.textContent=game.turn()==='w'?'White to move':'Black to move';
+}
+function tap(sq){
+ if(!game||thinking||game.game_over())return;
+ if(document.getElementById('mode').value==='ai'&&game.turn()==='b')return;
+ let p=game.get(sq);
+ if(selected&&legal.some(m=>m.to===sq)){
+  let opts={from:selected,to:sq};let piece=game.get(selected);
+  if(piece&&piece.type==='p'&&(sq[1]==='8'||sq[1]==='1')){pendingPromotion=opts;promoEl.classList.add('show');return}
+  doMove(opts);return
+ }
+ if(p&&p.color===game.turn()){selected=sq;legal=game.moves({square:sq,verbose:true});render()}else{selected=null;legal=[];render()}
+}
+function doMove(opts){
+ let m=game.move(opts);if(!m)return;lastMove={from:m.from,to:m.to};selected=null;legal=[];pendingPromotion=null;promoEl.classList.remove('show');render();updateStatus();
+ if(!game.game_over()&&document.getElementById('mode').value==='ai'&&game.turn()==='b')setTimeout(aiMove,320)
+}
+document.querySelectorAll('[data-p]').forEach(btn=>btn.addEventListener('click',()=>{if(pendingPromotion){pendingPromotion.promotion=btn.dataset.p;doMove(pendingPromotion)}}));
+function val(p){return ({p:100,n:320,b:330,r:500,q:900,k:20000})[p.type] + (p.color==='w'?1:0)}
+function scoreBoard(){let s=0,b=game.board();for(let r=0;r<8;r++)for(let c=0;c<8;c++)if(b[r][c])s+=(b[r][c].color==='b'?1:-1)*val(b[r][c]);return s}
+function aiMove(){
+ if(game.game_over()||game.turn()!=='b')return;thinking=true;
+ let ms=game.moves({verbose:true}),best=[],bestScore=Infinity;
+ let level=document.getElementById('level').value;
+ for(let m of ms){
+  game.move(m);let score=scoreBoard();if(game.in_checkmate())score=-999999;
+  // The computer is black, so it prefers low material score for White.
+  game.undo();
+  if(level==='medium'){
+   // Add a small preference for captures and checks, without making AI unbeatable.
+   if(m.captured)score-=val({type:m.captured,color:'w'});
+   if(m.flags&&m.flags.includes('c'))score-=35;
+  }
+  if(score<bestScore){bestScore=score;best=[m]}else if(score===bestScore)best.push(m)
+ }
+ let move=best[Math.floor(Math.random()*best.length)]||ms[Math.floor(Math.random()*ms.length)];
+ thinking=false;doMove({from:move.from,to:move.to,promotion:move.promotion||'q'});
+}
+document.getElementById('new').addEventListener('click',start);
+document.getElementById('undo').addEventListener('click',()=>{if(!game)return;game.undo();if(document.getElementById('mode').value==='ai'&&game.turn()==='b')game.undo();selected=null;legal=[];lastMove=null;promoEl.classList.remove('show');render();updateStatus()});
+document.getElementById('flip').addEventListener('click',()=>{flipped=!flipped;render()});
+document.getElementById('hint').addEventListener('click',()=>{if(!game||game.game_over())return;let ms=game.moves({verbose:true});if(!ms.length)return;let m=ms[Math.floor(Math.random()*ms.length)];selected=m.from;legal=game.moves({square:m.from,verbose:true});render();statusEl.textContent='Hint: try moving '+m.from+' to '+m.to});
+document.getElementById('mode').addEventListener('change',start);
+start();
+</script>
+</body>
+</html>
